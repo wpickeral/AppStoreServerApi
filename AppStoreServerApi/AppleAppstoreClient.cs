@@ -17,47 +17,35 @@ public class AppleAppstoreClient
     // https://www.apple.com/certificateauthority/
     // https://www.apple.com/certificateauthority/AppleRootCA-G3.cer
     private const string APPLE_ROOT_CA_G3_THUMBPRINT = "b52cb02fd567e0359fe8fa4d4c41037970fe01b0";
-
+    
     // The maximum age that an authentication token is allowed to have, as decided by Apple.
     private static readonly int _maxTokenAge = 3600; // seconds, = 1 hour
-    private readonly string _environment; // see: Environment
-    private readonly string _baseUrl;
-    private readonly string _privateKey;
-    private readonly string _keyId;
-    private readonly string _issuerId;
-    private readonly string _bundleId;
-    private readonly string _appstoreAudience;
+    private string _baseUrl;
     private string? _token;
     private DateTime? _tokenExpiry = null;
-
-    /// <summary>
-    /// 
-    /// </summary>
-    /// <param name="key">key the key downloaded from App Store Connect in PEM-encoded PKCS8 format.</param>
-    /// <param name="keyId">keyId the id of the key, retrieved from App Store Connect</param>
-    /// <param name="issuerId">issuerId your issuer ID, retrieved from App Store Connect</param>
-    /// <param name="bundleId">bundleId bundle ID of your app</param>
-    /// <param name="environment">Sandbox/Production</param>
-    public AppleAppstoreClient(string privateKey, string keyId, string issuerId, string applicationId, string appstoreAudience = "appstoreconnect-v1", string environment = AppleEnvironment.Sandbox)
-    {
-        _privateKey = privateKey;
-
-        _keyId = keyId;
-        _issuerId = issuerId;
-        _bundleId = applicationId;
-        _appstoreAudience = appstoreAudience;
-        _environment = environment;
-
-        if (environment == AppleEnvironment.Sandbox)
+    public required string PrivateKey { get; init; }
+    public required string KeyId { get; init; }
+    public required string IssuerId { get; init; }
+    public required string BundleId { get; init; }
+    public string AppStoreAudience { get; set; } = "appstoreconnect-v2";
+    
+    private readonly string _environment = AppleEnvironment.Sandbox;
+    public string Environment 
+    { 
+        get => _environment;
+        set
         {
-            _baseUrl = "https://api.storekit-sandbox.itunes.apple.com";
+            if (Environment == AppleEnvironment.Sandbox)
+            {
+                _baseUrl = "https://api.storekit-sandbox.itunes.apple.com";
+            }
+            else
+            {
+                _baseUrl = "https://api.storekit.itunes.apple.com";
+            }
         }
-        else
-        {
-            _baseUrl = "https://api.storekit.itunes.apple.com";
-        }
-    }
-
+    } 
+   
     private bool TokenExpired
     {
         get
@@ -70,23 +58,35 @@ public class AppleAppstoreClient
         }
     }
 
+    /// <summary>
+    /// 
+    /// </summary>
+    /// <param name="key">key the key downloaded from App Store Connect in PEM-encoded PKCS8 format.</param>
+    /// <param name="keyId">keyId the id of the key, retrieved from App Store Connect</param>
+    /// <param name="issuerId">issuerId your issuer ID, retrieved from App Store Connect</param>
+    /// <param name="bundleId">bundleId bundle ID of your app</param>
+    /// <param name="environment">Sandbox/Production</param>
+    public AppleAppstoreClient()
+    {
+    }
+
     // https://developer.apple.com/documentation/appstoreserverapi/get_transaction_history
     public async Task<HistoryResponse?> GetTransactionHistory(string originalTransactionId, string? revision)
     {
         var query = revision != null ? $"?query={revision}" : "";
 
-        return await MakeRequest<HistoryResponse>($"{_baseUrl}/inApps/v1/history/{originalTransactionId}{query}");
+        return await MakeRequest<HistoryResponse>($"{_baseUrl}/inApps/v2/history/{originalTransactionId}{query}");
     }
 
     // https://developer.apple.com/documentation/appstoreserverapi/get_all_subscription_statuses
     public async Task<StatusResponse?> GetSubscriptionStatuses(string originalTransactionId)
     {
-        return await MakeRequest<StatusResponse>($"{_baseUrl}/inApps/v1/subscriptions/{originalTransactionId}");
+        return await MakeRequest<StatusResponse>($"{_baseUrl}/inApps/v2/subscriptions/{originalTransactionId}");
     }
 
     public async Task<OrderLookupResponse?> LookupOrder(string orderId)
     {
-        return await MakeRequest<OrderLookupResponse>($"{_baseUrl}/inApps/v1/lookup/{orderId}");
+        return await MakeRequest<OrderLookupResponse>($"{_baseUrl}/inApps/v2/lookup/{orderId}");
     }
 
     #region Request utilities
@@ -122,7 +122,7 @@ public class AppleAppstoreClient
 
     private ECDsa GetEllipticCurveAlgorithm()
     {
-        var privateKey = _privateKey.Replace("-----BEGIN PRIVATE KEY-----", string.Empty).Replace("-----END PRIVATE KEY-----", string.Empty).Replace(Environment.NewLine, "");
+        var privateKey = PrivateKey.Replace("-----BEGIN PRIVATE KEY-----", string.Empty).Replace("-----END PRIVATE KEY-----", string.Empty).Replace(System.Environment.NewLine, "");
 
         var keyParams = (Org.BouncyCastle.Crypto.Parameters.ECPrivateKeyParameters)Org.BouncyCastle.Security.PrivateKeyFactory.CreateKey(Convert.FromBase64String(privateKey));
 
@@ -145,7 +145,7 @@ public class AppleAppstoreClient
         var signatureAlgorithm = GetEllipticCurveAlgorithm();
         var eCDsaSecurityKey = new ECDsaSecurityKey(signatureAlgorithm)
         {
-            KeyId = _keyId
+            KeyId = KeyId
         };
 
         return eCDsaSecurityKey;
@@ -166,13 +166,13 @@ public class AppleAppstoreClient
         var handler = new JsonWebTokenHandler();
         string jwt = handler.CreateToken(new SecurityTokenDescriptor
         {
-            Issuer = _issuerId,
-            Audience = _appstoreAudience,
+            Issuer = IssuerId,
+            Audience = AppStoreAudience,
             NotBefore = now,
             Expires = expiry,
             IssuedAt = now,
             Claims = new Dictionary<string, object> {
-                { "bid", _bundleId },
+                { "bid", BundleId },
                 { "nonce", Guid.NewGuid().ToString("N") }
             },
             SigningCredentials = new SigningCredentials(eCDsaSecurityKey, SecurityAlgorithms.EcdsaSha256)
